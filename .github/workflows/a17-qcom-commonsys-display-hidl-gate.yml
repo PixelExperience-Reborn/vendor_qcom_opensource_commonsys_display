@@ -1,0 +1,70 @@
+name: AOSP17 Qualcomm commonsys display HIDL archive boundary
+
+on:
+  push:
+    branches:
+      - audit/a17-qcom-commonsys-display-hidl-boundary-20261108
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qcom-commonsys-display-source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout archive source only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            Android.bp
+            config
+            gralloc
+            libqdmetadata
+            services
+            docs
+            tests
+            .github
+
+      - name: Validate pinned independent PE-Reborn AOSP17 graph and repository inventory
+        run: |
+          set -euo pipefail
+          git init -q "$RUNNER_TEMP/pe-a17-manifest"
+          git -C "$RUNNER_TEMP/pe-a17-manifest" remote add origin \
+            https://github.com/PixelExperience-Reborn/manifest.git
+          git -C "$RUNNER_TEMP/pe-a17-manifest" fetch -q --depth 1 origin \
+            c832b65d724af399742b24282646602b6bf5568d
+          git -C "$RUNNER_TEMP/pe-a17-manifest" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/pe-a17-manifest" rev-parse HEAD)" = \
+            "c832b65d724af399742b24282646602b6bf5568d"
+          python3 "$RUNNER_TEMP/pe-a17-manifest/tools/validate_aosp17_base_profiles.py"
+          python3 -m unittest discover -s "$RUNNER_TEMP/pe-a17-manifest/tools" \
+            -p test_aosp17_manifest_entrypoint.py -v
+          python3 "$RUNNER_TEMP/pe-a17-manifest/tools/validate_135_repository_matrix.py"
+
+      - name: Read pinned Qualcomm HWC3 Soong source only
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a17-display-refs"
+          curl --fail --location --silent --show-error --retry 3 \
+            "https://raw.githubusercontent.com/sonyxperiadev/hardware-qcom-display/baf61f736e2109522e3f72754ee7cfacbfa2dc6c/composer/Android.bp" \
+            --output "$RUNNER_TEMP/a17-display-refs/modern-composer.Android.bp"
+          test -s "$RUNNER_TEMP/a17-display-refs/modern-composer.Android.bp"
+
+      - name: Preserve original Git trees and test HIDL vs AIDL source contracts
+        run: |
+          set -euo pipefail
+          PE_AOSP17_REFERENCE="$RUNNER_TEMP/pe-a17-manifest/aosp17_reference.xml" \
+          PE_AOSP17_DEFAULT="$RUNNER_TEMP/pe-a17-manifest/default.xml" \
+          PE_QCOM_HWC3_COMPOSER_BP="$RUNNER_TEMP/a17-display-refs/modern-composer.Android.bp" \
+            python3 tests/test_aosp17_qcom_commonsys_display_boundary.py
+
+      - name: Verified scope
+        run: |
+          echo "AOSP17 platform source and Qualcomm display compatibility archive only."
+          echo "No external LF52406/LineageOS device trees, proprietary firmware or features."
+          echo "No full repo sync, Soong compilation, Android image or boot was performed."
